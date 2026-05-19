@@ -1,5 +1,20 @@
-const MAX_LOGS = 200;
+
 const logs = [];
-function addLog(entry) { logs.unshift(entry); if (logs.length > MAX_LOGS) logs.pop(); }
-function getLogs(limit=50) { return logs.slice(0,limit); }
-module.exports = { addLog, getLogs };
+const MAX_LOGS = 100;
+
+function log(type, message) {
+  const entry = {
+    type,
+    message,
+    timestamp: new Date().toISOString()
+  };
+  logs.unshift(entry);
+  if (logs.length > MAX_LOGS) logs.pop();
+  console.log(`[${type.toUpperCase()}] ${message}`);
+}
+
+function getLogs() {
+  return logs;
+}
+
+module.exports = { log, getLogs };

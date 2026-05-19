@@ -1,32 +1,58 @@
+
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
 const path = require('path');
-const rateLimit = require('express-rate-limit');
-const webhookRouter = require('./webhook');
-const sessionRouter = require('./session');
-const { getLogs } = require('./logger');
+const { getClient, getStatus, getQRCode, restartClient } = require('./whatsapp');
+const logger = require('./logger');
+
 const app = express();
-const PORT = process.env.PORT || 3000;
-app.use(cors());
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use(rateLimit({ windowMs: 60000, max: 100 }));
+app.use(express.json());
+app.use(express.static(path.join(__dirname, '../admin')));
+
+const ADMIN_USER = process.env.ADMIN_USER || 'admin';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'flashdrop@2026';
+
 function basicAuth(req, res, next) {
   const auth = req.headers['authorization'];
-  if (!auth || !auth.startsWith('Basic ')) { res.setHeader('WWW-Authenticate','Basic realm="FlashDrop Admin"'); return res.status(401).send('Acesso negado.'); }
-  const [user,pass] = Buffer.from(auth.split(' ')[1],'base64').toString().split(':');
-  if (user===process.env.ADMIN_USER && pass===process.env.ADMIN_PASS) return next();
-  res.setHeader('WWW-Authenticate','Basic realm="FlashDrop Admin"'); return res.status(401).send('Credenciais invalidas.');
+  if (!auth || !auth.startsWith('Basic ')) {
+    res.set('WWW-Authenticate', 'Basic realm="Admin"');
+    return res.status(401).send('Autenticação necessária');
+  }
+  const [user, pass] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
+  if (user === ADMIN_USER && pass === ADMIN_PASS) return next();
+  res.set('WWW-Authenticate', 'Basic realm="Admin"');
+  return res.status(401).send('Credenciais inválidas');
 }
-app.get('/health',(req,res) => res.json({ok:true,uptime:process.uptime()}));
-app.use('/webhook', webhookRouter);
-app.use('/session', sessionRouter);
-app.use('/admin', basicAuth);
-app.get('/admin',(req,res) => res.sendFile(path.join(__dirname,'../admin/index.html')));
-app.get('/admin/logs', basicAuth,(req,res) => res.json(getLogs()));
+
+app.get('/health', (req, res) => {
+  res.json({ ok: true, uptime: process.uptime() });
+});
+
+app.get('/api/status', basicAuth, (req, res) => {
+  res.json(getStatus());
+});
+
+app.get('/api/qrcode', basicAuth, (req, res) => {
+  const qr = getQRCode();
+  if (!qr) return res.json({ qr: null });
+  res.json({ qr });
+});
+
+app.post('/api/restart', basicAuth, async (req, res) => {
+  await restartClient();
+  res.json({ ok: true, message: 'Reconectando...' });
+});
+
+app.get('/admin', basicAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, '../admin/index.html'));
+});
+
+app.get('/api/logs', basicAuth, (req, res) => {
+  res.json(logger.getLogs());
+});
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log('[SERVER] FlashDrop WhatsApp Bot porta '+PORT);
-  const { registerWebhook } = require('./session');
-  setTimeout(registerWebhook, 5000);
+  console.log(`FlashDrop WhatsApp Bot rodando na porta ${PORT}`);
+  getClient();
 });
