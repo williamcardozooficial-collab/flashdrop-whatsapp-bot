@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>FlashDrop WhatsApp Bot Admin</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}
+body{background:#0f0f0f;color:#fff;min-height:100vh;padding:20px}
+.header{text-align:center;margin-bottom:30px}
+.header h1{font-size:24px;color:#25D366;margin-bottom:4px}
+.header p{color:#888;font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;max-width:1100px;margin:0 auto}
+.card{background:#1a1a1a;border:1px solid #333;border-radius:14px;padding:20px}
+.card h3{font-size:14px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px}
+.status-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.dot.green{background:#25D366;box-shadow:0 0 8px #25D366}
+.dot.yellow{background:#ffa500;box-shadow:0 0 8px #ffa500}
+.dot.red{background:#f44336;box-shadow:0 0 8px #f44336}
+.dot.gray{background:#555}
+#status-text{font-size:18px;font-weight:700}
+#qr-container{text-align:center;margin:10px 0}
+#qr-img{max-width:220px;border-radius:8px;background:#fff;padding:8px}
+.btn{width:100%;padding:12px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-top:10px}
+.btn-green{background:#25D366;color:#fff}
+.btn-yellow{background:#ffa500;color:#000}
+.log-item{padding:10px;border-bottom:1px solid #222;font-size:12px}
+.log-item:last-child{border:none}
+.log-item .meta{display:flex;justify-content:space-between;margin-bottom:3px}
+.log-item .name{font-weight:600;color:#fff}
+.log-item .time{color:#555;font-size:11px}
+.log-item .msg{color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;margin-right:5px}
+.badge.received{background:#1a3a2a;color:#25D366}
+.badge.sent{background:#1a2a3a;color:#4fc3f7}
+.logs-scroll{max-height:320px;overflow-y:auto}
+.empty{text-align:center;color:#555;padding:30px;font-size:13px}
+.uptime{text-align:center;color:#ffcc00;font-size:13px;margin-top:10px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #333;border-top-color:#25D366;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
+</style>
+</head>
+<body>
+<div class="header">
+<h1>🤖 FlashDrop WhatsApp Bot</h1>
+<p>Painel de controle — Evolution API</p>
+</div>
+<div class="grid">
+<div class="card">
+<h3>📡 Status da Conexao</h3>
+<div class="status-row"><div class="dot gray" id="status-dot"></div><span id="status-text">Verificando...</span></div>
+<div id="phone-info" style="color:#aaa;font-size:13px;margin-top:4px">—</div>
+<div class="uptime" id="uptime-info"></div>
+<button class="btn btn-yellow" onclick="reconnect()">🔄 Reconectar Sessao</button>
+<button class="btn btn-green" onclick="checkStatus()">↻ Atualizar Status</button>
+</div>
+<div class="card">
+<h3>📱 QR Code WhatsApp</h3>
+<div id="qr-container"><div class="empty">Carregando...</div></div>
+<div id="qr-status" style="color:#888;font-size:13px;margin-top:8px;text-align:center"></div>
+<button class="btn btn-green" onclick="loadQR()">🔃 Gerar Novo QR Code</button>
+<div style="text-align:center;color:#444;font-size:11px;margin-top:8px">Atualiza automaticamente a cada 30s quando desconectado</div>
+</div>
+<div class="card" style="grid-column:1/-1">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+<h3 style="margin:0">📋 Log de Mensagens</h3>
+<button onclick="loadLogs()" style="background:#222;border:1px solid #444;color:#aaa;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px">↻ Atualizar</button>
+</div>
+<div class="logs-scroll" id="logs-container"><div class="empty">Carregando logs...</div></div>
+</div>
+</div>
+<script>
+async function checkStatus(){
+  const dot=document.getElementById("status-dot"),text=document.getElementById("status-text"),info=document.getElementById("phone-info");
+  text.innerHTML="<span class=\"spinner\"></span>Verificando...";
+  try{
+    const r=await fetch("/session/status"),d=await r.json();
+    const state=(d.instance?.state||d.state||"unknown").toLowerCase();
+    if(state==="open"||state==="connected"){
+      dot.className="dot green";text.textContent="✅ Conectado";
+      info.textContent="Numero: "+(d.instance?.profileName||d.instance?.wuid||"—");
+      stopQRInterval();
+    }else if(state==="connecting"||state==="qr"){
+      dot.className="dot yellow";text.textContent="⏳ Aguardando QR";
+      info.textContent="Escaneie o QR Code abaixo";startQRInterval();loadQR();
+    }else{
+      dot.className="dot red";text.textContent="❌ Desconectado";
+      info.textContent=state;startQRInterval();loadQR();
+    }
+  }catch(e){dot.className="dot red";text.textContent="⚠️ Erro";info.textContent=e.message;}
+}
+let qrInterval=null;
+async function loadQR(){
+  const c=document.getElementById("qr-container"),s=document.getElementById("qr-status");
+  try{
+    const r=await fetch("/session/qrcode"),d=await r.json();
+    if(d.qrcode?.base64||d.base64){
+      const b=d.qrcode?.base64||d.base64,src=b.startsWith("data:")?b:"data:image/png;base64,"+b;
+      c.innerHTML="<img id=\"qr-img\" src=\""+src+"\"><br>";
+      s.textContent="📷 Escaneie com o WhatsApp";
+    }else if(d.qrcode?.pairingCode||d.pairingCode){
+      c.innerHTML="<div style=\"font-size:28px;font-weight:900;letter-spacing:6px;color:#25D366;padding:20px\">"+(d.qrcode?.pairingCode||d.pairingCode)+"</div>";
+      s.textContent="🔢 Use o codigo de pareamento";
+    }else{c.innerHTML="<div class=\"empty\">Conectado ou QR indisponivel</div>";s.textContent="";}
+  }catch(e){c.innerHTML="<div class=\"empty\" style=\"color:#f44336\">Erro: "+e.message+"</div>";}
+}
+function startQRInterval(){if(!qrInterval)qrInterval=setInterval(loadQR,30000);}
+function stopQRInterval(){
+  if(qrInterval){clearInterval(qrInterval);qrInterval=null;
+  document.getElementById("qr-container").innerHTML="<div class=\"empty\" style=\"color:#25D366\">✅ Conectado!</div>";
+  document.getElementById("qr-status").textContent="";}
+}
+async function reconnect(){
+  document.getElementById("status-text").innerHTML="<span class=\"spinner\"></span>Reconectando...";
+  try{await fetch("/session/reconnect",{method:"POST"});setTimeout(checkStatus,3000);}
+  catch(e){alert("Erro: "+e.message);}
+}
+async function loadLogs(){
+  const c=document.getElementById("logs-container");
+  try{
+    const r=await fetch("/admin/logs"),logs=await r.json();
+    if(!logs.length){c.innerHTML="<div class=\"empty\">Nenhuma mensagem ainda.</div>";return;}
+    c.innerHTML=logs.map(l=>{
+      const t=new Date(l.timestamp).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+      const d=new Date(l.timestamp).toLocaleDateString("pt-BR");
+      const badge=l.type==="received"?"<span class=\"badge received\">▼ Recebida</span>":"<span class=\"badge sent\">▲ Enviada</span>";
+      const name=l.name?l.name+" ("+l.phone+")":l.phone;
+      return "<div class=\"log-item\"><div class=\"meta\"><span class=\"name\">"+badge+(l.type==="received"?name:"🤖 Bot → "+l.phone)+"</span><span class=\"time\">"+d+" "+t+"</span></div><div class=\"msg\">"+l.text+"</div></div>";
+    }).join("");
+  }catch(e){c.innerHTML="<div class=\"empty\" style=\"color:#f44336\">Erro: "+e.message+"</div>";}
+}
+async function loadUptime(){
+  try{const r=await fetch("/health"),d=await r.json();const s=Math.floor(d.uptime),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;document.getElementById("uptime-info").textContent="⏱ Uptime: "+h+"h "+m+"m "+sec+"s";}catch(e){}
+}
+checkStatus();loadLogs();loadUptime();
+setInterval(checkStatus,15000);setInterval(loadLogs,10000);setInterval(loadUptime,5000);
+</script>
+</body>
+</html>
