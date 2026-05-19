@@ -15,6 +15,7 @@ function createClient() {
   client = new Client({
     authStrategy: new LocalAuth({ dataPath: '/tmp/wwebjs_auth' }),
     puppeteer: {
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -22,6 +23,7 @@ function createClient() {
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
         '--no-zygote',
+        '--single-process',
         '--disable-gpu'
       ],
       headless: true
