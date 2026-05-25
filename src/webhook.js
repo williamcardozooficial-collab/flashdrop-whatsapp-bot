@@ -6,7 +6,7 @@ const { addLog } = require('./logger');
 const processing = new Set();
 
 router.post('/', async (req, res) => {
-  res.status(200).json({ ok: true });
+    return res.status(200).json({ ok: true });
   try {
     const body = req.body;
     const event = body.event || body.type;
