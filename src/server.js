@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
-const { getClient, getStatus, getQRCode, restartClient } = require('./whatsapp');
+const { getClient, getStatus, getQRCode, sendMessage, restartClient } = require('./whatsapp');
 const logger = require('./logger');
 
 const app = express();
@@ -16,12 +16,12 @@ function basicAuth(req, res, next) {
   const auth = req.headers['authorization'];
   if (!auth || !auth.startsWith('Basic ')) {
     res.set('WWW-Authenticate', 'Basic realm="Admin"');
-    return res.status(401).send('Autenticação necessária');
+    return res.status(401).send('Autenticacao necessaria');
   }
   const [user, pass] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
   if (user === ADMIN_USER && pass === ADMIN_PASS) return next();
   res.set('WWW-Authenticate', 'Basic realm="Admin"');
-  return res.status(401).send('Credenciais inválidas');
+  return res.status(401).send('Credenciais invalidas');
 }
 
 app.get('/health', (req, res) => {
@@ -34,8 +34,7 @@ app.get('/api/status', basicAuth, (req, res) => {
 
 app.get('/api/qrcode', basicAuth, (req, res) => {
   const qr = getQRCode();
-  if (!qr) return res.json({ qr: null });
-  res.json({ qr });
+  res.json({ qr: qr || null });
 });
 
 app.post('/api/restart', basicAuth, async (req, res) => {
@@ -43,15 +42,16 @@ app.post('/api/restart', basicAuth, async (req, res) => {
   res.json({ ok: true, message: 'Reconectando...' });
 });
 
-app.get('/admin', basicAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, '../admin/index.html'));
-});
-
 app.get('/api/logs', basicAuth, (req, res) => {
   res.json(logger.getLogs());
 });
 
-// Rota interna para envio de mensagem WhatsApp (chamada pelo backend)
+app.get('/admin', basicAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, '../admin/index.html'));
+});
+
+// Rota para envio de mensagem WhatsApp (chamada pelo backend FlashDrop)
+// Usada para: aviso de cadastro recebido e aviso de aprovacao
 app.post('/api/send-message', async (req, res) => {
   const secret = req.headers['x-bot-secret'];
   if (secret !== BOT_SECRET) {
@@ -59,31 +59,25 @@ app.post('/api/send-message', async (req, res) => {
   }
   const { phone, message } = req.body;
   if (!phone || !message) {
-    return res.status(400).json({ error: 'phone e message são obrigatórios' });
+    return res.status(400).json({ error: 'phone e message sao obrigatorios' });
   }
   try {
-    const client = getClient();
-    const status = getStatus();
-    if (!status.connected) {
-      return res.status(503).json({ error: 'WhatsApp não conectado' });
+    const st = getStatus();
+    if (!st.connected) {
+      return res.status(503).json({ error: 'WhatsApp nao conectado' });
     }
-    // Formata o número: remove tudo que não é dígito e adiciona @c.us
-    const digits = phone.replace(/\D/g, '');
-    // Se tiver 10 dígitos (sem o 9), adiciona o 9 após o DDD
-    const formatted = digits.length === 10
-      ? digits.slice(0, 2) + '9' + digits.slice(2) + '@c.us'
-      : digits + '@c.us';
-    await client.sendMessage(formatted, message);
-    logger.log(`Mensagem enviada para ${formatted}`);
-    res.json({ ok: true, to: formatted });
+    await sendMessage(phone, message);
+    logger.log('outgoing', 'Mensagem enviada para ' + phone);
+    res.json({ ok: true, to: phone });
   } catch (e) {
-    logger.log(`Erro ao enviar mensagem: ${e.message}`);
+    console.error('[send-message] Erro:', e.message);
+    logger.log('error', 'Erro ao enviar para ' + phone + ': ' + e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`FlashDrop WhatsApp Bot rodando na porta ${PORT}`);
-  getClient();
+  console.log('FlashDrop WhatsApp Bot rodando na porta ' + PORT);
+  getClient(); // inicia o WhatsApp
 });
