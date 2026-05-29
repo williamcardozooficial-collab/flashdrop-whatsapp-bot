@@ -80,14 +80,15 @@ async function sendMessage(phone, text) {
   const c = getClient();
   if (!status.connected) throw new Error('WhatsApp nao conectado');
   // Limpa o numero: remove tudo que nao e digito
-  let clean = phone.replace(/\D/g, '');
-  // Adiciona codigo do Brasil se nao tiver (55)
-  if (!clean.startsWith('55')) clean = '55' + clean;
-  // Resolve o JID correto via getNumberId (evita erro "No LID for user")
-  const numberId = await c.getNumberId(clean);
-  if (!numberId) throw new Error('Numero nao encontrado no WhatsApp: ' + clean);
-  await c.sendMessage(numberId._serialized, text);
-  logger.log('outgoing', 'Mensagem enviada para ' + clean);
+  let digits = phone.replace(/\D/g, '');
+  // Remove 55 inicial se ja tiver (evita duplicar)
+  if (digits.startsWith('55') && digits.length > 11) digits = digits.slice(2);
+  // Garante o 9 apos DDD para celular brasileiro (10 digitos -> 11)
+  if (digits.length === 10) digits = digits.slice(0, 2) + '9' + digits.slice(2);
+  // Monta JID com codigo do pais
+  const jid = '55' + digits + '@c.us';
+  await c.sendMessage(jid, text);
+  logger.log('outgoing', 'Mensagem enviada para ' + jid);
 }
 
 async function restartClient() {
