@@ -79,11 +79,15 @@ function getClient() {
 async function sendMessage(phone, text) {
   const c = getClient();
   if (!status.connected) throw new Error('WhatsApp nao conectado');
-  // Format phone: remove non-digits, add @c.us
-  const clean = phone.replace(/\D/g, '');
-  const jid = clean.includes('@') ? clean : clean + '@c.us';
-  await c.sendMessage(jid, text);
-  logger.log('outgoing', 'Mensagem enviada para ' + phone);
+  // Limpa o numero: remove tudo que nao e digito
+  let clean = phone.replace(/\D/g, '');
+  // Adiciona codigo do Brasil se nao tiver (55)
+  if (!clean.startsWith('55')) clean = '55' + clean;
+  // Resolve o JID correto via getNumberId (evita erro "No LID for user")
+  const numberId = await c.getNumberId(clean);
+  if (!numberId) throw new Error('Numero nao encontrado no WhatsApp: ' + clean);
+  await c.sendMessage(numberId._serialized, text);
+  logger.log('outgoing', 'Mensagem enviada para ' + clean);
 }
 
 async function restartClient() {
