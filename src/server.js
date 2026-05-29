@@ -67,15 +67,23 @@ app.post('/api/send-message', async (req, res) => {
     if (!status.connected) {
       return res.status(503).json({ error: 'WhatsApp não conectado' });
     }
-    // Formata o número: remove tudo que não é dígito e adiciona @c.us
-    const digits = phone.replace(/\D/g, '');
+    // Formata o número: remove tudo que não é dígito
+    let digits = phone.replace(/\D/g, '');
+    // Remove 55 inicial se já tiver para não duplicar
+    if (digits.startsWith('55') && digits.length > 11) digits = digits.slice(2);
     // Se tiver 10 dígitos (sem o 9), adiciona o 9 após o DDD
-    const formatted = digits.length === 10
-      ? digits.slice(0, 2) + '9' + digits.slice(2) + '@c.us'
-      : digits + '@c.us';
-    await client.sendMessage(formatted, message);
-    logger.log('outgoing', 'Mensagem enviada para ' + formatted);
-    res.json({ ok: true, to: formatted });
+    if (digits.length === 10) digits = digits.slice(0, 2) + '9' + digits.slice(2);
+    // Adiciona código do Brasil
+    const withCountry = '55' + digits;
+    // Usa getNumberId para obter o JID correto no protocolo multi-device
+    const numberId = await client.getNumberId(withCountry);
+    if (!numberId) {
+      logger.log('error', 'Número não encontrado no WhatsApp: ' + withCountry);
+      return res.status(404).json({ error: 'Numero nao encontrado no WhatsApp: ' + withCountry });
+    }
+    await client.sendMessage(numberId._serialized, message);
+    logger.log('outgoing', 'Mensagem enviada para ' + numberId._serialized);
+    res.json({ ok: true, to: numberId._serialized });
   } catch (e) {
     logger.log('error', 'Erro ao enviar mensagem: ' + e.message);
     res.status(500).json({ error: e.message });
