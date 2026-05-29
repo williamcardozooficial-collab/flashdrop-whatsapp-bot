@@ -1,7 +1,5 @@
-
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
-const { getAutoReply } = require('./ai');
 const logger = require('./logger');
 
 let client = null;
@@ -60,23 +58,9 @@ function createClient() {
     setTimeout(() => createClient(), 5000);
   });
 
-  client.on('message', async (msg) => {
-    if (msg.fromMe) return;
-    if (msg.isGroupMsg) return;
-
-    const from = msg.from;
-    const body = msg.body;
-    logger.log('incoming', `De ${from}: ${body}`);
-
-    try {
-      const reply = await getAutoReply(from, body);
-      if (reply) {
-        await msg.reply(reply);
-        logger.log('outgoing', `Para ${from}: ${reply}`);
-      }
-    } catch (err) {
-      console.error('Erro ao responder:', err);
-    }
+  // Ignora todas as mensagens recebidas - sem resposta automatica
+  client.on('message', (msg) => {
+    logger.log('incoming', 'Mensagem recebida de ' + msg.from + ' (ignorada)');
   });
 
   client.initialize().catch(err => {
@@ -92,6 +76,16 @@ function getClient() {
   return client;
 }
 
+async function sendMessage(phone, text) {
+  const c = getClient();
+  if (!status.connected) throw new Error('WhatsApp nao conectado');
+  // Format phone: remove non-digits, add @c.us
+  const clean = phone.replace(/\D/g, '');
+  const jid = clean.includes('@') ? clean : clean + '@c.us';
+  await c.sendMessage(jid, text);
+  logger.log('outgoing', 'Mensagem enviada para ' + phone);
+}
+
 async function restartClient() {
   status = { connected: false, phone: null, state: 'REINICIANDO' };
   currentQR = null;
@@ -102,4 +96,4 @@ async function restartClient() {
   setTimeout(() => createClient(), 2000);
 }
 
-module.exports = { getClient, getStatus, getQRCode, restartClient };
+module.exports = { getClient, getStatus, getQRCode, sendMessage, restartClient };
