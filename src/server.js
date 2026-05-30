@@ -90,6 +90,31 @@ app.post('/api/send-message', async (req, res) => {
   }
 });
 
+// Link do grupo WhatsApp (armazenado em memória)
+let _groupLink = process.env.GROUP_LINK || '';
+
+app.get('/api/group-link', basicAuth, (req, res) => {
+  res.json({ link: _groupLink });
+});
+
+app.post('/api/group-link', basicAuth, (req, res) => {
+  const { link } = req.body;
+  _groupLink = (link || '').trim();
+  res.json({ ok: true, link: _groupLink });
+});
+
+app.delete('/api/group-link', basicAuth, (req, res) => {
+  _groupLink = '';
+  res.json({ ok: true });
+});
+
+// Expoe o link do grupo para uso interno (usa bot-secret)
+app.get('/api/group-link/internal', (req, res) => {
+  const secret = req.headers['x-bot-secret'];
+  if (secret !== BOT_SECRET) return res.status(403).json({ error: 'Acesso negado' });
+  res.json({ link: _groupLink });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log('FlashDrop WhatsApp Bot rodando na porta ' + PORT);
