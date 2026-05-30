@@ -90,66 +90,50 @@ app.post('/api/send-message', async (req, res) => {
   }
 });
 
-// Link do grupo WhatsApp (armazenado em memória)
-let _groupLink = process.env.GROUP_LINK || '';
+// Link do grupo WhatsApp (persistido em arquivo /tmp)
+const fs = require('fs');
+const GROUP_LINK_FILE = '/tmp/group_link.txt';
+function _loadGroupLink() { try { return fs.readFileSync(GROUP_LINK_FILE,'utf8').trim(); } catch(e) { return ''; } }
+function _saveGroupLink(v) { try { fs.writeFileSync(GROUP_LINK_FILE, v||'', 'utf8'); } catch(e) {} }
+let _groupLink = process.env.GROUP_LINK || _loadGroupLink();
 
 app.get('/api/group-link', basicAuth, (req, res) => {
   res.json({ link: _groupLink });
 });
-
 app.post('/api/group-link', basicAuth, (req, res) => {
   const { link } = req.body;
   _groupLink = (link || '').trim();
+  _saveGroupLink(_groupLink);
   res.json({ ok: true, link: _groupLink });
 });
-
 app.delete('/api/group-link', basicAuth, (req, res) => {
   _groupLink = '';
+  _saveGroupLink('');
   res.json({ ok: true });
 });
-
-// Expoe o link do grupo para uso interno (usa bot-secret)
 app.get('/api/group-link/internal', (req, res) => {
   const secret = req.headers['x-bot-secret'];
   if (secret !== BOT_SECRET) return res.status(403).json({ error: 'Acesso negado' });
   res.json({ link: _groupLink });
 });
 
-// Envia mensagem para o grupo WhatsApp pelo link salvo
+// Envia mensagem para o grupo WhatsApp pelo ID salvo
 app.post('/api/send-group-message', async (req, res) => {
   const secret = req.headers['x-bot-secret'];
   if (secret !== BOT_SECRET) return res.status(403).json({ error: 'Acesso negado' });
   const { message } = req.body;
-  if (!message) return res.status(400).json({ error: 'message e obrigatorio' });
-  if (!_groupLink) return res.status(404).json({ error: 'Link do grupo nao configurado' });
+  if (!message) return res.status(400).json({ error: 'message obrigatorio' });
+  if (!_groupLink) return res.status(404).json({ error: 'Grupo nao configurado' });
+  if (!_groupLink.includes('@g.us')) return res.status(400).json({ error: 'Use Ver Grupos para selecionar o grupo pelo ID direto' });
   try {
     const client = getClient();
     const status = getStatus();
     if (!status.connected) return res.status(503).json({ error: 'WhatsApp nao conectado' });
-    // Suporta ID direto (ex: 120363xxx@g.us) ou link de convite
-    let groupChatId = null;
-    if (_groupLink.includes('@g.us')) {
-      // ID direto do grupo
-      groupChatId = _groupLink.trim();
-    } else {
-      // Link de convite: busca o grupo nos chats onde o bot e membro
-      const code = _groupLink.split('/').pop().trim();
-      const chats = await client.getChats();
-      for (const chat of chats) {
-        if (chat.isGroup) {
-          try {
-            const inv = await chat.getInviteCode();
-            if (inv === code) { groupChatId = chat.id._serialized; break; }
-          } catch(e) {}
-        }
-      }
-    }
-    if (!groupChatId) return res.status(404).json({ error: 'Grupo nao encontrado. Use o ID direto do grupo (@g.us) ou verifique se o bot e membro.' });
-    await client.sendMessage(groupChatId, message);
-    logger.log('outgoing', 'Mensagem enviada para o grupo: ' + groupChatId);
-    res.json({ ok: true, groupId: groupChatId });
+    await client.sendMessage(_groupLink.trim(), message);
+    logger.log('outgoing', 'Mensagem enviada para o grupo: ' + _groupLink);
+    res.json({ ok: true, groupId: _groupLink });
   } catch (e) {
-    logger.log('error', 'Erro ao enviar mensagem no grupo: ' + e.message);
+    logger.log('error', 'Erro grupo: ' + e.message);
     res.status(500).json({ error: e.message });
   }
 });
