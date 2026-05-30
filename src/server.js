@@ -126,18 +126,50 @@ app.post('/api/send-group-message', async (req, res) => {
     const client = getClient();
     const status = getStatus();
     if (!status.connected) return res.status(503).json({ error: 'WhatsApp nao conectado' });
-    const code = _groupLink.split('/').pop().trim();
-    if (!code) return res.status(400).json({ error: 'Link do grupo invalido' });
-    const groupId = await client.getGroupIdFromInviteCode(code);
-    if (!groupId) return res.status(404).json({ error: 'Grupo nao encontrado. Verifique se o bot e membro do grupo.' });
-    await client.sendMessage(groupId + '@g.us', message);
-    logger.log('outgoing', 'Mensagem enviada para o grupo: ' + groupId);
-    res.json({ ok: true, groupId });
+    // Suporta ID direto (ex: 120363xxx@g.us) ou link de convite
+    let groupChatId = null;
+    if (_groupLink.includes('@g.us')) {
+      // ID direto do grupo
+      groupChatId = _groupLink.trim();
+    } else {
+      // Link de convite: busca o grupo nos chats onde o bot e membro
+      const code = _groupLink.split('/').pop().trim();
+      const chats = await client.getChats();
+      for (const chat of chats) {
+        if (chat.isGroup) {
+          try {
+            const inv = await chat.getInviteCode();
+            if (inv === code) { groupChatId = chat.id._serialized; break; }
+          } catch(e) {}
+        }
+      }
+    }
+    if (!groupChatId) return res.status(404).json({ error: 'Grupo nao encontrado. Use o ID direto do grupo (@g.us) ou verifique se o bot e membro.' });
+    await client.sendMessage(groupChatId, message);
+    logger.log('outgoing', 'Mensagem enviada para o grupo: ' + groupChatId);
+    res.json({ ok: true, groupId: groupChatId });
   } catch (e) {
     logger.log('error', 'Erro ao enviar mensagem no grupo: ' + e.message);
     res.status(500).json({ error: e.message });
   }
 });
+
+// Lista os grupos que o bot participa (para obter o ID direto)
+app.get('/api/groups', basicAuth, async (req, res) => {
+  try {
+    const client = getClient();
+    const status = getStatus();
+    if (!status.connected) return res.status(503).json({ error: 'WhatsApp nao conectado' });
+    const chats = await client.getChats();
+    const groups = chats
+      .filter(c => c.isGroup)
+      .map(c => ({ id: c.id._serialized, name: c.name }));
+    res.json(groups);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
