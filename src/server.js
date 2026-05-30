@@ -115,6 +115,30 @@ app.get('/api/group-link/internal', (req, res) => {
   res.json({ link: _groupLink });
 });
 
+// Envia mensagem para o grupo WhatsApp pelo link salvo
+app.post('/api/send-group-message', async (req, res) => {
+  const secret = req.headers['x-bot-secret'];
+  if (secret !== BOT_SECRET) return res.status(403).json({ error: 'Acesso negado' });
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: 'message e obrigatorio' });
+  if (!_groupLink) return res.status(404).json({ error: 'Link do grupo nao configurado' });
+  try {
+    const client = getClient();
+    const status = getStatus();
+    if (!status.connected) return res.status(503).json({ error: 'WhatsApp nao conectado' });
+    const code = _groupLink.split('/').pop().trim();
+    if (!code) return res.status(400).json({ error: 'Link do grupo invalido' });
+    const groupId = await client.getGroupIdFromInviteCode(code);
+    if (!groupId) return res.status(404).json({ error: 'Grupo nao encontrado. Verifique se o bot e membro do grupo.' });
+    await client.sendMessage(groupId + '@g.us', message);
+    logger.log('outgoing', 'Mensagem enviada para o grupo: ' + groupId);
+    res.json({ ok: true, groupId });
+  } catch (e) {
+    logger.log('error', 'Erro ao enviar mensagem no grupo: ' + e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log('FlashDrop WhatsApp Bot rodando na porta ' + PORT);
