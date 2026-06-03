@@ -22,7 +22,17 @@ function createClient() {
         '--no-first-run',
         '--no-zygote',
         '--single-process',
-        '--disable-gpu'
+        '--disable-gpu',
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-sync',
+        '--disable-translate',
+        '--hide-scrollbars',
+        '--mute-audio',
+        '--safebrowsing-disable-auto-update',
+        '--ignore-certificate-errors',
+        '--disable-web-security'
       ],
       headless: true
     }
@@ -42,11 +52,7 @@ function createClient() {
     console.log('WhatsApp conectado!');
     currentQR = null;
     const info = client.info;
-    status = {
-      connected: true,
-      phone: info ? info.wid.user : 'Desconhecido',
-      state: 'CONECTADO'
-    };
+    status = { connected: true, phone: info ? info.wid.user : 'Desconhecido', state: 'CONECTADO' };
     logger.log('system', 'WhatsApp conectado: ' + status.phone);
   });
 
@@ -55,7 +61,7 @@ function createClient() {
     status = { connected: false, phone: null, state: 'DESCONECTADO' };
     currentQR = null;
     logger.log('system', 'WhatsApp desconectado: ' + reason);
-    setTimeout(() => createClient(), 5000);
+    setTimeout(() => createClient(), 10000);
   });
 
   // Ignora todas as mensagens recebidas - sem resposta automatica
@@ -65,7 +71,7 @@ function createClient() {
 
   client.initialize().catch(err => {
     console.error('Erro ao inicializar WhatsApp:', err);
-    setTimeout(() => createClient(), 10000);
+    setTimeout(() => createClient(), 30000);
   });
 
   return client;
@@ -79,12 +85,16 @@ function getClient() {
 async function sendMessage(phone, text) {
   const c = getClient();
   if (!status.connected) throw new Error('WhatsApp nao conectado');
+
   // Limpa o numero: remove tudo que nao e digito
   let digits = phone.replace(/\D/g, '');
+
   // Remove 55 inicial se ja tiver (evita duplicar)
   if (digits.startsWith('55') && digits.length > 11) digits = digits.slice(2);
+
   // Garante o 9 apos DDD para celular brasileiro (10 digitos -> 11)
   if (digits.length === 10) digits = digits.slice(0, 2) + '9' + digits.slice(2);
+
   // Monta JID com codigo do pais
   const jid = '55' + digits + '@c.us';
   await c.sendMessage(jid, text);
@@ -98,7 +108,7 @@ async function restartClient() {
     try { await client.destroy(); } catch (e) {}
     client = null;
   }
-  setTimeout(() => createClient(), 2000);
+  setTimeout(() => createClient(), 5000);
 }
 
 module.exports = { getClient, getStatus, getQRCode, sendMessage, restartClient };
