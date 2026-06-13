@@ -57,6 +57,7 @@
       </div>
       <div class="phone" id="status-phone"></div>
       <button class="btn" id="btn-restart" onclick="restart()">🔄 Reconectar</button>
+      <button class="btn" id="btn-logout" onclick="logout()" style="background:#c0392b;margin-top:10px">📵 Desconectar</button>
     </div>
     <div class="card">
       <h2>QR Code WhatsApp</h2>
@@ -151,6 +152,20 @@ async function restart() {
     await fetch('/api/restart', { method: 'POST' });
   } catch(e) {}
   setTimeout(() => { btn.disabled = false; btn.textContent = '🔄 Reconectar'; }, 3000);
+}
+
+async function logout() {
+  if (!confirm('Desconectar o WhatsApp? Você precisará escanear o QR Code novamente.')) return;
+  const btn = document.getElementById('btn-logout');
+  btn.disabled = true;
+  btn.textContent = 'Desconectando...';
+  try {
+    await fetch('/api/logout', { method: 'POST' });
+    document.getElementById('status-text').textContent = 'Desconectado';
+    document.getElementById('status-dot').className = 'status-dot disconnected';
+    alert('WhatsApp desconectado com sucesso.');
+  } catch(e) { alert('Erro: ' + e.message); }
+  setTimeout(() => { btn.disabled = false; btn.textContent = '📵 Desconectar'; }, 3000);
 }
 
 function refresh() {
