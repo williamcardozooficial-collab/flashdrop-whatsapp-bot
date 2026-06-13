@@ -41,7 +41,18 @@ app.get('/api/qrcode', basicAuth, (req, res) => {
 app.post('/api/restart', basicAuth, async (req, res) => {
   await restartClient();
   res.json({ ok: true, message: 'Reconectando...' });
+})
+app.post('/api/logout', basicAuth, async (req, res) => {
+  try {
+    const c = getClient();
+    if (c) await c.logout();
+    logger.log('WhatsApp desconectado via painel admin');
+    res.json({ ok: true });
+  } catch(e) {
+    res.json({ ok: false, error: e.message });
+  }
 });
+;
 
 app.get('/admin', basicAuth, (req, res) => {
   res.sendFile(path.join(__dirname, '../admin/index.html'));
