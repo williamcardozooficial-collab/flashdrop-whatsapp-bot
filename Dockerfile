@@ -25,9 +25,9 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Variavel para puppeteer usar chromium do sistema
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+# Puppeteer usa seu proprio Chrome (baixado no npm install) em vez do chromium
+# do sistema, pois a versao do Debian (150.x) trava (Trace/breakpoint trap /
+# crashpad ptrace EPERM) no ambiente do Railway.
 
 WORKDIR /app
 COPY package*.json ./
