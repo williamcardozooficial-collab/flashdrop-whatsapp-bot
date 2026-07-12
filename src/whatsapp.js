@@ -33,7 +33,8 @@ function createClient() {
         '--ignore-certificate-errors',
         '--disable-web-security'
       ],
-      headless: true
+      headless: true,
+            protocolTimeout: 120000
     }
   });
 
