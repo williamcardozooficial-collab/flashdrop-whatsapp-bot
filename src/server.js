@@ -97,6 +97,9 @@ app.post('/api/send-message', async (req, res) => {
     res.json({ ok: true, to: numberId._serialized });
   } catch (e) {
     logger.log('error', 'Erro ao enviar mensagem: ' + e.message);
+        if (/Runtime.callFunctionOn timed out|Protocol error|Target closed/i.test(e.message)) {
+                restartClient();
+        }
     res.status(500).json({ error: e.message });
   }
 });
@@ -145,6 +148,9 @@ app.post('/api/send-group-message', async (req, res) => {
     res.json({ ok: true, groupId: _groupLink });
   } catch (e) {
     logger.log('error', 'Erro grupo: ' + e.message);
+        if (/Runtime.callFunctionOn timed out|Protocol error|Target closed/i.test(e.message)) {
+                restartClient();
+        }
     res.status(500).json({ error: e.message });
   }
 });
