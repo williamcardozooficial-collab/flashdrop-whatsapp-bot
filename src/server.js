@@ -135,7 +135,7 @@ app.get('/api/group-link/internal', (req, res) => {
 app.post('/api/send-group-message', async (req, res) => {
   const secret = req.headers['x-bot-secret'];
   if (secret !== BOT_SECRET) return res.status(403).json({ error: 'Acesso negado' });
-  const { message } = req.body;
+  const { message, mentionAll } = req.body;
   if (!message) return res.status(400).json({ error: 'message obrigatorio' });
   if (!_groupLink) return res.status(404).json({ error: 'Grupo nao configurado' });
   if (!_groupLink.includes('@g.us')) return res.status(400).json({ error: 'Use Ver Grupos para selecionar o grupo pelo ID direto' });
@@ -143,7 +143,7 @@ app.post('/api/send-group-message', async (req, res) => {
     const client = getClient();
     const status = getStatus();
     if (!status.connected) return res.status(503).json({ error: 'WhatsApp nao conectado' });
-    await client.sendMessage(_groupLink.trim(), message);
+    let finalMessage = message; let mentionIds = []; if (mentionAll) { try { const chat = await client.getChatById(_groupLink.trim()); if (chat && chat.participants) { mentionIds = chat.participants.map(p => p.id._serialized); if (mentionIds.length) { finalMessage = finalMessage + ' ' + mentionIds.map(id => '@' + id.split('@')[0]).join(' '); } } } catch (eMention) { logger.log('error', 'Erro ao buscar participantes: ' + eMention.message); } } await client.sendMessage(_groupLink.trim(), finalMessage, mentionIds.length ? { mentions: mentionIds } : undefined);
     logger.log('outgoing', 'Mensagem enviada para o grupo: ' + _groupLink);
     res.json({ ok: true, groupId: _groupLink });
   } catch (e) {
