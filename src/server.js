@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const { getClient, getStatus, getQRCode, restartClient } = require('./whatsapp');
-const logger = require('./logger');
+const logger = require('./logger'); function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); } async function sendWithRetry(sendFn) { try { await sendFn(); } catch (e) { if (/Runtime.callFunctionOn timed out|Protocol error|Target closed/i.test(e.message)) { logger.log('error', 'Falha transitoria ao enviar, reiniciando WhatsApp e tentando novamente: ' + e.message); await restartClient(); await sleep(10000); await sendFn(); return; } throw e; } }
 
 const app = express();
 app.use(express.json());
@@ -84,21 +84,20 @@ app.post('/api/send-message', async (req, res) => {
     if (digits.startsWith('55') && digits.length > 11) digits = digits.slice(2);
     // Se tiver 10 dígitos (sem o 9), adiciona o 9 após o DDD
     if (digits.length === 10) digits = digits.slice(0, 2) + '9' + digits.slice(2);
-    // Adiciona código do Brasil
-    const withCountry = '55' + digits;
+const withCountry = '55' + digits;
     // Usa getNumberId para obter o JID correto no protocolo multi-device
     const numberId = await client.getNumberId(withCountry);
     if (!numberId) {
       logger.log('error', 'Número não encontrado no WhatsApp: ' + withCountry);
       return res.status(404).json({ error: 'Numero nao encontrado no WhatsApp: ' + withCountry });
     }
-    await client.sendMessage(numberId._serialized, message);
+    await sendWithRetry(async function () { await (getClient()).sendMessage(numberId._serialized, message); });
     logger.log('outgoing', 'Mensagem enviada para ' + numberId._serialized);
     res.json({ ok: true, to: numberId._serialized });
   } catch (e) {
     logger.log('error', 'Erro ao enviar mensagem: ' + e.message);
         if (/Runtime.callFunctionOn timed out|Protocol error|Target closed/i.test(e.message)) {
-                restartClient();
+                
         }
     res.status(500).json({ error: e.message });
   }
@@ -143,13 +142,13 @@ app.post('/api/send-group-message', async (req, res) => {
     const client = getClient();
     const status = getStatus();
     if (!status.connected) return res.status(503).json({ error: 'WhatsApp nao conectado' });
-    let finalMessage = message; let mentionIds = []; if (mentionAll) { try { const chat = await client.getChatById(_groupLink.trim()); if (chat && chat.participants) { mentionIds = chat.participants.map(p => p.id._serialized); if (mentionIds.length) { finalMessage = finalMessage + ' ' + mentionIds.map(id => '@' + id.split('@')[0]).join(' '); } } } catch (eMention) { logger.log('error', 'Erro ao buscar participantes: ' + eMention.message); } } await client.sendMessage(_groupLink.trim(), finalMessage, mentionIds.length ? { mentions: mentionIds } : undefined);
+    let finalMessage = message; let mentionIds = []; if (mentionAll) { try { const chat = await client.getChatById(_groupLink.trim()); if (chat && chat.participants) { mentionIds = chat.participants.map(p => p.id._serialized); if (mentionIds.length) { finalMessage = finalMessage + ' ' + mentionIds.map(id => '@' + id.split('@')[0]).join(' '); } } } catch (eMention) { logger.log('error', 'Erro ao buscar participantes: ' + eMention.message); } } await sendWithRetry(async function () { await (getClient()).sendMessage(_groupLink.trim(), finalMessage, mentionIds.length ? { mentions: mentionIds } : undefined); });
     logger.log('outgoing', 'Mensagem enviada para o grupo: ' + _groupLink);
     res.json({ ok: true, groupId: _groupLink });
   } catch (e) {
     logger.log('error', 'Erro grupo: ' + e.message);
         if (/Runtime.callFunctionOn timed out|Protocol error|Target closed/i.test(e.message)) {
-                restartClient();
+                
         }
     res.status(500).json({ error: e.message });
   }
