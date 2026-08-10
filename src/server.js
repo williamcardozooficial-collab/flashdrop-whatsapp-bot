@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const { getClient, getStatus, getQRCode, restartClient } = require('./whatsapp');
-const logger = require('./logger'); function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); } async function sendWithRetry(sendFn) { try { await sendFn(); } catch (e) { if (/Runtime.callFunctionOn timed out|Protocol error|Target closed/i.test(e.message)) { logger.log('error', 'Falha transitoria ao enviar, reiniciando WhatsApp e tentando novamente: ' + e.message); await restartClient(); await sleep(10000); await sendFn(); return; } throw e; } }
+const logger = require('./logger'); function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); } async function sendWithRetry(sendFn) { try { await sendFn(); } catch (e) { if (/Runtime.callFunctionOn timed out|Protocol error|Target closed/i.test(e.message)) { logger.log('error', 'Falha transitoria ao enviar, reiniciando WhatsApp e tentando novamente: ' + e.message); await restartClient(); await sleep(10000); await sendFn(); return; } throw e; } } function withTimeout(promise, ms, label) { return new Promise(function (resolve, reject) { var timer = setTimeout(function () { reject(new Error('TIMEOUT: ' + label + ' demorou mais de ' + ms + 'ms')); }, ms); Promise.resolve(promise).then(function (v) { clearTimeout(timer); resolve(v); }, function (e) { clearTimeout(timer); reject(e); }); }); }
 
 const app = express();
 app.use(express.json());
@@ -86,12 +86,12 @@ app.post('/api/send-message', async (req, res) => {
     if (digits.length === 10) digits = digits.slice(0, 2) + '9' + digits.slice(2);
 const withCountry = '55' + digits;
     // Usa getNumberId para obter o JID correto no protocolo multi-device
-    const numberId = await client.getNumberId(withCountry);
+    const numberId = await withTimeout(client.getNumberId(withCountry), 20000, 'getNumberId');
     if (!numberId) {
       logger.log('error', 'Número não encontrado no WhatsApp: ' + withCountry);
       return res.status(404).json({ error: 'Numero nao encontrado no WhatsApp: ' + withCountry });
     }
-    await sendWithRetry(async function () { await (getClient()).sendMessage(numberId._serialized, message); });
+    await withTimeout(sendWithRetry(async function () { await (getClient()).sendMessage(numberId._serialized, message); }), 20000, 'sendMessage');
     logger.log('outgoing', 'Mensagem enviada para ' + numberId._serialized);
     res.json({ ok: true, to: numberId._serialized });
   } catch (e) {
