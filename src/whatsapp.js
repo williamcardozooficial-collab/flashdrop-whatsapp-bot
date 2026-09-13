@@ -9,8 +9,15 @@ let status = { connected: false, phone: null, state: 'DESCONECTADO' };
 function getStatus() { return status; }
 function getQRCode() { return currentQR; }
 
+// Fecha o browser do Puppeteer com seguranca, sem travar o resto do fluxo
+// caso ja tenha caido sozinho.
+async function safeDestroy(c) {
+  if (!c) return;
+  try { await c.destroy(); } catch (e) { /* ja pode estar fechado */ }
+}
+
 function createClient() {
-  client = new Client({
+  const newClient = new Client({
     authStrategy: new LocalAuth({ dataPath: '/tmp/wwebjs_auth' }),
     puppeteer: {
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -38,7 +45,13 @@ function createClient() {
     }
   });
 
-  client.on('qr', async (qr) => {
+  // Se enquanto isso outro createClient()/restartClient() ja rolou, esse
+  // client virou "velho" e nao deve mais mexer no estado global (evita
+  // condicao de corrida e client duplicado rodando ao mesmo tempo).
+  const isCurrent = () => client === newClient;
+
+  newClient.on('qr', async (qr) => {
+    if (!isCurrent()) return;
     console.log('QR Code gerado, escaneie no painel admin');
     status = { connected: false, phone: null, state: 'AGUARDANDO_QR' };
     try {
@@ -48,33 +61,44 @@ function createClient() {
     }
   });
 
-  client.on('ready', () => {
+  newClient.on('ready', () => {
+    if (!isCurrent()) return;
     console.log('WhatsApp conectado!');
     currentQR = null;
-    const info = client.info;
+    const info = newClient.info;
     status = { connected: true, phone: info ? info.wid.user : 'Desconhecido', state: 'CONECTADO' };
     logger.log('system', 'WhatsApp conectado: ' + status.phone);
   });
 
-  client.on('disconnected', (reason) => {
+  newClient.on('disconnected', async (reason) => {
+    if (!isCurrent()) return;
     console.log('WhatsApp desconectado:', reason);
     status = { connected: false, phone: null, state: 'DESCONECTADO' };
     currentQR = null;
     logger.log('system', 'WhatsApp desconectado: ' + reason);
-    setTimeout(() => createClient(), 10000);
+    client = null;
+    // Fecha o browser desse client explicitamente - o evento 'disconnected'
+    // por si so nao mata o processo do Chrome, que ficaria orfao consumindo
+    // memoria pra sempre (era o mesmo bug corrigido no bot da loja).
+    await safeDestroy(newClient);
+    setTimeout(() => { if (!client) createClient(); }, 10000);
   });
 
   // Ignora todas as mensagens recebidas - sem resposta automatica
-  client.on('message', (msg) => {
+  newClient.on('message', (msg) => {
+    if (!isCurrent()) return;
     logger.log('incoming', 'Mensagem recebida de ' + msg.from + ' (ignorada)');
   });
 
-  client.initialize().catch(err => {
+  newClient.initialize().catch(err => {
     console.error('Erro ao inicializar WhatsApp:', err);
-    setTimeout(() => createClient(), 30000);
+    if (!isCurrent()) return;
+    client = null;
+    setTimeout(() => { if (!client) createClient(); }, 30000);
   });
 
-  return client;
+  client = newClient;
+  return newClient;
 }
 
 function getClient() {
@@ -104,11 +128,10 @@ async function sendMessage(phone, text) {
 async function restartClient() {
   status = { connected: false, phone: null, state: 'REINICIANDO' };
   currentQR = null;
-  if (client) {
-    try { await client.destroy(); } catch (e) {}
-    client = null;
-  }
-  setTimeout(() => createClient(), 5000);
+  const old = client;
+  client = null;
+  await safeDestroy(old);
+  setTimeout(() => { if (!client) createClient(); }, 5000);
 }
 
 module.exports = { getClient, getStatus, getQRCode, sendMessage, restartClient };
