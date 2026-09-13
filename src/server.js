@@ -2,7 +2,28 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const { getClient, getStatus, getQRCode, restartClient } = require('./whatsapp');
-const logger = require('./logger'); function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); } async function sendWithRetry(sendFn) { try { await sendFn(); } catch (e) { if (/Runtime.callFunctionOn timed out|Protocol error|Target closed/i.test(e.message)) { logger.log('error', 'Falha transitoria ao enviar, reiniciando WhatsApp e tentando novamente: ' + e.message); await restartClient(); await sleep(10000); await sendFn(); return; } throw e; } } function withTimeout(promise, ms, label) { return new Promise(function (resolve, reject) { var timer = setTimeout(function () { reject(new Error('TIMEOUT: ' + label + ' demorou mais de ' + ms + 'ms')); }, ms); Promise.resolve(promise).then(function (v) { clearTimeout(timer); resolve(v); }, function (e) { clearTimeout(timer); reject(e); }); }); }
+const logger = require('./logger'); function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); } function withTimeout(promise, ms, label) { return new Promise(function (resolve, reject) { var timer = setTimeout(function () { reject(new Error('TIMEOUT: ' + label + ' demorou mais de ' + ms + 'ms')); }, ms); Promise.resolve(promise).then(function (v) { clearTimeout(timer); resolve(v); }, function (e) { clearTimeout(timer); reject(e); }); }); }
+// sendWithRetry agora tambem coloca o timeout (nao so os erros classicos do
+// Puppeteer) como motivo para reiniciar o WhatsApp e tentar de novo. Antes,
+// um travamento tipo "TIMEOUT: getNumberId demorou..." nao disparava o
+// reinicio automatico - so falhava e ficava travado ate alguem clicar em
+// "Reconectar" manualmente no painel.
+async function sendWithRetry(sendFn, timeoutMs, label) {
+  timeoutMs = timeoutMs || 25000;
+  label = label || 'operacao';
+  try {
+    await withTimeout(sendFn(), timeoutMs, label);
+  } catch (e) {
+    if (/Runtime\.callFunctionOn timed out|Protocol error|Target closed|^TIMEOUT:/i.test(e.message)) {
+      logger.log('error', 'Falha transitoria (' + label + '), reiniciando WhatsApp e tentando novamente: ' + e.message);
+      await restartClient();
+      await sleep(10000);
+      await withTimeout(sendFn(), timeoutMs, label);
+      return;
+    }
+    throw e;
+  }
+}
 
 const app = express();
 app.use(express.json());
@@ -73,7 +94,6 @@ app.post('/api/send-message', async (req, res) => {
     return res.status(400).json({ error: 'phone e message são obrigatórios' });
   }
   try {
-    const client = getClient();
     const status = getStatus();
     if (!status.connected) {
       return res.status(503).json({ error: 'WhatsApp não conectado' });
@@ -84,21 +104,22 @@ app.post('/api/send-message', async (req, res) => {
     if (digits.startsWith('55') && digits.length > 11) digits = digits.slice(2);
     // Se tiver 10 dígitos (sem o 9), adiciona o 9 após o DDD
     if (digits.length === 10) digits = digits.slice(0, 2) + '9' + digits.slice(2);
-const withCountry = '55' + digits;
-    // Usa getNumberId para obter o JID correto no protocolo multi-device
-    const numberId = await withTimeout(client.getNumberId(withCountry), 20000, 'getNumberId');
+    const withCountry = '55' + digits;
+    // Usa getNumberId para obter o JID correto no protocolo multi-device.
+    // Envolvido em sendWithRetry: se essa chamada travar (era o que estava
+    // acontecendo - Chrome travado sem dar erro nenhum, so nao respondia),
+    // reinicia o WhatsApp sozinho e tenta de novo em vez de so falhar.
+    let numberId;
+    await sendWithRetry(async function () { numberId = await (getClient()).getNumberId(withCountry); }, 20000, 'getNumberId');
     if (!numberId) {
       logger.log('error', 'Número não encontrado no WhatsApp: ' + withCountry);
       return res.status(404).json({ error: 'Numero nao encontrado no WhatsApp: ' + withCountry });
     }
-    await withTimeout(sendWithRetry(async function () { await (getClient()).sendMessage(numberId._serialized, message); }), 20000, 'sendMessage');
+    await sendWithRetry(async function () { await (getClient()).sendMessage(numberId._serialized, message); }, 20000, 'sendMessage');
     logger.log('outgoing', 'Mensagem enviada para ' + numberId._serialized);
     res.json({ ok: true, to: numberId._serialized });
   } catch (e) {
     logger.log('error', 'Erro ao enviar mensagem: ' + e.message);
-        if (/Runtime.callFunctionOn timed out|Protocol error|Target closed/i.test(e.message)) {
-                
-        }
     res.status(500).json({ error: e.message });
   }
 });
@@ -142,14 +163,11 @@ app.post('/api/send-group-message', async (req, res) => {
     const client = getClient();
     const status = getStatus();
     if (!status.connected) return res.status(503).json({ error: 'WhatsApp nao conectado' });
-    let finalMessage = message; let mentionIds = []; if (mentionAll) { try { const chat = await client.getChatById(_groupLink.trim()); if (chat && chat.participants) { mentionIds = chat.participants.map(p => p.id._serialized); if (mentionIds.length) { finalMessage = finalMessage + ' ' + mentionIds.map(id => '@' + id.split('@')[0]).join(' '); } } } catch (eMention) { logger.log('error', 'Erro ao buscar participantes: ' + eMention.message); } } await sendWithRetry(async function () { await (getClient()).sendMessage(_groupLink.trim(), finalMessage, mentionIds.length ? { mentions: mentionIds } : undefined); });
+    let finalMessage = message; let mentionIds = []; if (mentionAll) { try { const chat = await client.getChatById(_groupLink.trim()); if (chat && chat.participants) { mentionIds = chat.participants.map(p => p.id._serialized); if (mentionIds.length) { finalMessage = finalMessage + ' ' + mentionIds.map(id => '@' + id.split('@')[0]).join(' '); } } } catch (eMention) { logger.log('error', 'Erro ao buscar participantes: ' + eMention.message); } } await sendWithRetry(async function () { await (getClient()).sendMessage(_groupLink.trim(), finalMessage, mentionIds.length ? { mentions: mentionIds } : undefined); }, 20000, 'sendGroupMessage');
     logger.log('outgoing', 'Mensagem enviada para o grupo: ' + _groupLink);
     res.json({ ok: true, groupId: _groupLink });
   } catch (e) {
     logger.log('error', 'Erro grupo: ' + e.message);
-        if (/Runtime.callFunctionOn timed out|Protocol error|Target closed/i.test(e.message)) {
-                
-        }
     res.status(500).json({ error: e.message });
   }
 });
