@@ -124,48 +124,68 @@ app.post('/api/send-message', async (req, res) => {
   }
 });
 
-// Link do grupo WhatsApp (persistido em arquivo /tmp)
+// Link(s) do(s) grupo(s) WhatsApp (persistido em arquivo /tmp). Suporta mais de
+// um grupo simultaneo - "principal" (grupo 1, comportamento original/padrao) e
+// "secundario" (grupo 2, novo) - cada um com seu proprio link salvo e suas
+// proprias mensagens, decididas por quem chama /api/send-group-message atraves
+// do campo "grupo" no corpo da requisicao ('principal' por padrao, para nao
+// quebrar quem ja chama esse endpoint sem informar o campo).
 const fs = require('fs');
-const GROUP_LINK_FILE = '/tmp/group_link.txt';
-function _loadGroupLink() { try { return fs.readFileSync(GROUP_LINK_FILE,'utf8').trim(); } catch(e) { return ''; } }
-function _saveGroupLink(v) { try { fs.writeFileSync(GROUP_LINK_FILE, v||'', 'utf8'); } catch(e) {} }
-let _groupLink = process.env.GROUP_LINK || _loadGroupLink();
+const GROUPS = {
+  principal: { file: '/tmp/group_link.txt', envVar: 'GROUP_LINK' },
+  secundario: { file: '/tmp/group_link_2.txt', envVar: 'GROUP_LINK_2' },
+};
+function _loadGroupLink(file) { try { return fs.readFileSync(file,'utf8').trim(); } catch(e) { return ''; } }
+function _saveGroupLink(file, v) { try { fs.writeFileSync(file, v||'', 'utf8'); } catch(e) {} }
+const _groupLinks = {
+  principal: process.env.GROUP_LINK || _loadGroupLink(GROUPS.principal.file),
+  secundario: process.env.GROUP_LINK_2 || _loadGroupLink(GROUPS.secundario.file),
+};
+function _grupoKey(v) { return (v === 'secundario' || v === 2 || v === '2') ? 'secundario' : 'principal'; }
 
 app.get('/api/group-link', basicAuth, (req, res) => {
-  res.json({ link: _groupLink });
+  const key = _grupoKey(req.query.grupo);
+  res.json({ link: _groupLinks[key] });
 });
 app.post('/api/group-link', basicAuth, (req, res) => {
-  const { link } = req.body;
-  _groupLink = (link || '').trim();
-  _saveGroupLink(_groupLink);
-  res.json({ ok: true, link: _groupLink });
+  const { link, grupo } = req.body;
+  const key = _grupoKey(grupo);
+  _groupLinks[key] = (link || '').trim();
+  _saveGroupLink(GROUPS[key].file, _groupLinks[key]);
+  res.json({ ok: true, link: _groupLinks[key] });
 });
 app.delete('/api/group-link', basicAuth, (req, res) => {
-  _groupLink = '';
-  _saveGroupLink('');
+  const key = _grupoKey(req.query.grupo || (req.body && req.body.grupo));
+  _groupLinks[key] = '';
+  _saveGroupLink(GROUPS[key].file, '');
   res.json({ ok: true });
 });
 app.get('/api/group-link/internal', (req, res) => {
   const secret = req.headers['x-bot-secret'];
   if (secret !== BOT_SECRET) return res.status(403).json({ error: 'Acesso negado' });
-  res.json({ link: _groupLink });
+  const key = _grupoKey(req.query.grupo);
+  res.json({ link: _groupLinks[key] });
 });
 
-// Envia mensagem para o grupo WhatsApp pelo ID salvo
+// Envia mensagem para o grupo WhatsApp pelo ID salvo. O campo opcional "grupo"
+// no corpo ('principal' ou 'secundario', ou 1/2) escolhe qual grupo recebe -
+// se omitido, usa o grupo principal (mesmo comportamento de sempre).
 app.post('/api/send-group-message', async (req, res) => {
   const secret = req.headers['x-bot-secret'];
   if (secret !== BOT_SECRET) return res.status(403).json({ error: 'Acesso negado' });
-  const { message, mentionAll } = req.body;
+  const { message, mentionAll, grupo } = req.body;
+  const key = _grupoKey(grupo);
+  const groupLink = _groupLinks[key];
   if (!message) return res.status(400).json({ error: 'message obrigatorio' });
-  if (!_groupLink) return res.status(404).json({ error: 'Grupo nao configurado' });
-  if (!_groupLink.includes('@g.us')) return res.status(400).json({ error: 'Use Ver Grupos para selecionar o grupo pelo ID direto' });
+  if (!groupLink) return res.status(404).json({ error: 'Grupo (' + key + ') nao configurado' });
+  if (!groupLink.includes('@g.us')) return res.status(400).json({ error: 'Use Ver Grupos para selecionar o grupo (' + key + ') pelo ID direto' });
   try {
     const client = getClient();
     const status = getStatus();
     if (!status.connected) return res.status(503).json({ error: 'WhatsApp nao conectado' });
-    let finalMessage = message; let mentionIds = []; if (mentionAll) { try { const chat = await client.getChatById(_groupLink.trim()); if (chat && chat.participants) { mentionIds = chat.participants.map(p => p.id._serialized); if (mentionIds.length) { finalMessage = finalMessage + ' ' + mentionIds.map(id => '@' + id.split('@')[0]).join(' '); } } } catch (eMention) { logger.log('error', 'Erro ao buscar participantes: ' + eMention.message); } } await sendWithRetry(async function () { await (getClient()).sendMessage(_groupLink.trim(), finalMessage, mentionIds.length ? { mentions: mentionIds } : undefined); }, 20000, 'sendGroupMessage');
-    logger.log('outgoing', 'Mensagem enviada para o grupo: ' + _groupLink);
-    res.json({ ok: true, groupId: _groupLink });
+    let finalMessage = message; let mentionIds = []; if (mentionAll) { try { const chat = await client.getChatById(groupLink.trim()); if (chat && chat.participants) { mentionIds = chat.participants.map(p => p.id._serialized); if (mentionIds.length) { finalMessage = finalMessage + ' ' + mentionIds.map(id => '@' + id.split('@')[0]).join(' '); } } } catch (eMention) { logger.log('error', 'Erro ao buscar participantes: ' + eMention.message); } } await sendWithRetry(async function () { await (getClient()).sendMessage(groupLink.trim(), finalMessage, mentionIds.length ? { mentions: mentionIds } : undefined); }, 20000, 'sendGroupMessage');
+    logger.log('outgoing', 'Mensagem enviada para o grupo (' + key + '): ' + groupLink);
+    res.json({ ok: true, groupId: groupLink, grupo: key });
   } catch (e) {
     logger.log('error', 'Erro grupo: ' + e.message);
     res.status(500).json({ error: e.message });
