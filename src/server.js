@@ -167,6 +167,28 @@ app.get('/api/group-link/internal', (req, res) => {
   res.json({ link: _groupLinks[key] });
 });
 
+// MODO TESTE: botao no painel para silenciar as mensagens enviadas aos GRUPOS
+// (principal e secundario). Quando ligado, /api/send-group-message nao envia
+// nada ao WhatsApp - responde ok com skipped:true (para o backend nao tratar
+// como erro nem tentar de novo) e so registra no log e conta quantas foram
+// seguradas. Mensagens individuais (/api/send-message) NAO sao afetadas.
+// O estado fica em arquivo; se o servidor reiniciar sem o arquivo, volta a enviar.
+const MUTE_FILE = '/tmp/groups_muted.txt';
+function _loadMuted() { if (process.env.GROUPS_MUTED === '1') return true; try { return fs.readFileSync(MUTE_FILE, 'utf8').trim() === '1'; } catch (e) { return false; } }
+let _gruposSilenciados = _loadMuted();
+let _gruposBloqueadas = 0;
+app.get('/api/groups-mute', basicAuth, (req, res) => {
+  res.json({ muted: _gruposSilenciados, bloqueadas: _gruposBloqueadas });
+});
+app.post('/api/groups-mute', basicAuth, (req, res) => {
+  const muted = !!(req.body && (req.body.muted === true || req.body.muted === 'true' || req.body.muted === 1));
+  _gruposSilenciados = muted;
+  if (!muted) _gruposBloqueadas = 0;
+  try { fs.writeFileSync(MUTE_FILE, muted ? '1' : '0', 'utf8'); } catch (e) {}
+  logger.log('system', muted ? 'MODO TESTE LIGADO: mensagens para os grupos estao silenciadas' : 'Modo teste desligado: mensagens para os grupos voltaram a ser enviadas');
+  res.json({ ok: true, muted: _gruposSilenciados, bloqueadas: _gruposBloqueadas });
+});
+
 // Envia mensagem para o grupo WhatsApp pelo ID salvo. O campo opcional "grupo"
 // no corpo ('principal' ou 'secundario', ou 1/2) escolhe qual grupo recebe -
 // se omitido, usa o grupo principal (mesmo comportamento de sempre).
@@ -177,6 +199,11 @@ app.post('/api/send-group-message', async (req, res) => {
   const key = _grupoKey(grupo);
   const groupLink = _groupLinks[key];
   if (!message) return res.status(400).json({ error: 'message obrigatorio' });
+  if (_gruposSilenciados) {
+    _gruposBloqueadas++;
+    logger.log('system', 'MODO TESTE: mensagem para o grupo (' + key + ') NAO enviada (silenciado) - total segurado: ' + _gruposBloqueadas);
+    return res.json({ ok: true, skipped: true, motivo: 'grupos silenciados (modo teste)', grupo: key });
+  }
   if (!groupLink) return res.status(404).json({ error: 'Grupo (' + key + ') nao configurado' });
   if (!groupLink.includes('@g.us')) return res.status(400).json({ error: 'Use Ver Grupos para selecionar o grupo (' + key + ') pelo ID direto' });
   try {
