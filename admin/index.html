@@ -67,6 +67,15 @@
       </div>
     </div>
   </div>
+  <div class="card" id="mute-card" style="margin-bottom:20px">
+  <h2>&#129514; Modo teste - mensagens nos grupos</h2>
+  <p style="color:#888;font-size:13px;margin-bottom:14px">Ligue para o bot <b>parar de enviar</b> mensagens nos grupos de WhatsApp enquanto voce faz testes. Mensagens individuais (para motoboy, loja e cliente) continuam sendo enviadas normalmente.</p>
+  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+    <button id="btn-mute" onclick="alternarMute()" style="padding:12px 22px;border:none;border-radius:10px;color:#fff;font-size:15px;font-weight:700;cursor:pointer;background:#333">Carregando...</button>
+    <span id="mute-status" style="font-size:14px;color:#aaa"></span>
+  </div>
+  <div id="mute-msg" style="margin-top:10px;font-size:13px;display:none"></div>
+</div>
   <div class="card" style="margin-bottom:20px">
   <h2>&#128279; Link do Grupo WhatsApp</h2>
   <p style="color:#888;font-size:13px;margin-bottom:14px">Cole aqui o link de convite do grupo. Quando salvo, o bot envia notificacoes de novos pedidos nesse grupo.</p>
@@ -181,6 +190,7 @@ async function logout() {
 }
 
 function refresh() {
+  carregarMute();
   fetchStatus();
   fetchQR();
   fetchLogs();
@@ -327,6 +337,42 @@ async function selecionarGrupo2(groupId, groupName) {
   } catch(e) { mostrarMsgGrupo2('Erro: ' + e.message, '#ff4444'); }
 }
 
+
+var _muteAtual = null;
+function mostrarMute(muted, bloqueadas) {
+  _muteAtual = muted;
+  var b = document.getElementById('btn-mute');
+  var st = document.getElementById('mute-status');
+  if (muted) {
+    b.textContent = '\uD83D\uDD14 Voltar a enviar nos grupos';
+    b.style.background = '#c0392b';
+    st.innerHTML = '<b style="color:#ff6b6b">SILENCIADO</b> - nada esta indo para os grupos. Mensagens seguradas: <b>' + (bloqueadas || 0) + '</b>';
+  } else {
+    b.textContent = '\uD83D\uDD07 Silenciar grupos (modo teste)';
+    b.style.background = 'linear-gradient(135deg,#ff6b00,#ff9500)';
+    st.innerHTML = '<b style="color:#00d26a">NORMAL</b> - mensagens estao sendo enviadas aos grupos.';
+  }
+}
+async function carregarMute() {
+  try {
+    var r = await fetch('/api/groups-mute');
+    var d = await r.json();
+    mostrarMute(!!d.muted, d.bloqueadas);
+  } catch (e) {}
+}
+async function alternarMute() {
+  var b = document.getElementById('btn-mute');
+  var alvo = !_muteAtual;
+  b.disabled = true;
+  try {
+    var r = await fetch('/api/groups-mute', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ muted: alvo }) });
+    var d = await r.json();
+    if (!d.ok || d.muted !== alvo) throw new Error('o servidor nao confirmou a mudanca');
+    mostrarMute(!!d.muted, d.bloqueadas);
+  } catch (e) { alert('Erro ao alterar o modo teste: ' + e.message); carregarMute(); }
+  b.disabled = false;
+}
+carregarMute();
 loadGroupLink();
 loadGroupLink2();
 refresh();
